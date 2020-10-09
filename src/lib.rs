@@ -26,8 +26,6 @@ mod fd;
 mod file;
 pub mod io;
 mod mnode;
-#[cfg(test)]
-mod test;
 
 /// The maximum number of open files for a process.
 pub const MAX_FILES_PER_PROCESS: usize = 1024;

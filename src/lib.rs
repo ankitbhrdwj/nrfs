@@ -1,19 +1,28 @@
 //! The core module for file management.
+#![no_std]
+#![feature(new_uninit)]
+#![feature(get_mut_unchecked)]
+#![feature(negative_impls)]
+#![feature(try_reserve)]
 
-use crate::arch::process::UserSlice;
+#[cfg(test)]
+extern crate std;
+
+extern crate alloc;
+extern crate core;
+extern crate hashbrown;
+
 use alloc::string::{String, ToString};
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use custom_error::custom_error;
 use hashbrown::HashMap;
-
-use kpi::io::*;
-use kpi::SystemCallError;
-
-use crate::fs::mnode::{MemNode, NodeType};
+pub use io::*;
+use mnode::{MemNode, NodeType};
 
 mod file;
+pub mod io;
 mod mnode;
 #[cfg(test)]
 mod test;
@@ -52,22 +61,6 @@ custom_error! {
     OutOfMemory = "Unable to allocate memory for file",
 }
 
-impl Into<SystemCallError> for FileSystemError {
-    fn into(self) -> SystemCallError {
-        match self {
-            FileSystemError::InvalidFileDescriptor => SystemCallError::BadFileDescriptor,
-            FileSystemError::InvalidFile => SystemCallError::BadFileDescriptor,
-            FileSystemError::InvalidFlags => SystemCallError::BadFlags,
-            FileSystemError::InvalidOffset => SystemCallError::PermissionError,
-            FileSystemError::PermissionError => SystemCallError::PermissionError,
-            FileSystemError::AlreadyPresent => SystemCallError::PermissionError,
-            FileSystemError::DirectoryError => SystemCallError::PermissionError,
-            FileSystemError::OpenFileLimit => SystemCallError::OutOfMemory,
-            FileSystemError::OutOfMemory => SystemCallError::OutOfMemory,
-        }
-    }
-}
-
 /// Abstract definition of file-system interface operations.
 pub trait FileSystem {
     fn create(&mut self, pathname: &str, modes: Modes) -> Result<u64, FileSystemError>;
@@ -80,7 +73,7 @@ pub trait FileSystem {
     fn read(
         &self,
         mnode_num: Mnode,
-        buffer: &mut UserSlice,
+        buffer: &mut [u8],
         offset: usize,
     ) -> Result<usize, FileSystemError>;
     fn lookup(&self, pathname: &str) -> Option<Arc<Mnode>>;
@@ -225,7 +218,7 @@ impl FileSystem for MemFS {
     fn read(
         &self,
         mnode_num: Mnode,
-        buffer: &mut UserSlice,
+        buffer: &mut [u8],
         offset: usize,
     ) -> Result<usize, FileSystemError> {
         match self.mnodes.get(&mnode_num) {

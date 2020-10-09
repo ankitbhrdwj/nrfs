@@ -1,0 +1,21 @@
+[package]
+name = "nrfs"
+version = "0.0.1"
+edition = "2018"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+description = "A simple in-memory FS."
+keywords = ["mem", "fs", "btree", "file-system"]
+categories = ["filesystem", "concurrency", "data-structures", "os"]
+
+[[bin]]
+name = "main"
+path = "bin/main.rs"
+
+[dependencies]
+log = "0.4"
+hashbrown = "*"
+custom_error = { git = "https://github.com/gz/custom_error.git" }
+bitflags = "*"
+x86 = "*"
+proptest = "0.9.4"

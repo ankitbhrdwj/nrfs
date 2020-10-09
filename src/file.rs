@@ -1,7 +1,7 @@
-use crate::fs::{FileSystemError, Modes};
+use crate::io::*;
+use crate::{FileSystemError, Modes};
 use alloc::vec::Vec;
 use core::mem::size_of;
-use kpi::io::*;
 use x86::bits64::paging::BASE_PAGE_SIZE;
 
 #[derive(Debug, Eq, PartialEq)]

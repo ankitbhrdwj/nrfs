@@ -4,15 +4,12 @@ use alloc::vec::Vec;
 use core::cmp::{Eq, PartialEq};
 use core::sync::atomic::Ordering;
 use core::u64::MAX;
-
-use crate::alloc::borrow::ToOwned;
-
 use proptest::prelude::*;
 
-use kpi::io::*;
+use crate::alloc::borrow::ToOwned;
+use crate::io::*;
 
 use super::*;
-use crate::*;
 
 /// What operations that the model needs to keep track of.
 ///
@@ -122,6 +119,34 @@ impl ModelFS {
         } else {
             None
         }
+    }
+}
+
+use core::ops::{Deref, DerefMut};
+
+pub struct UserSlice<'a> {
+    pub buffer: &'a mut [u8],
+}
+
+impl<'a> UserSlice<'a> {
+    pub fn new(base: u64, len: usize) -> UserSlice<'a> {
+        let slice_ptr = base as <*const u8>::as_ref();
+        let user_slice: &mut [u8] =
+            unsafe { core::slice::from_raw_parts_mut(slice_ptr.as_mut_ptr(), len) };
+        UserSlice { buffer: user_slice }
+    }
+}
+
+impl<'a> Deref for UserSlice<'a> {
+    type Target = [u8];
+    fn deref(&self) -> &Self::Target {
+        unsafe { &*self.buffer }
+    }
+}
+
+impl<'a> DerefMut for UserSlice<'a> {
+    fn deref_mut(&mut self) -> &mut [u8] {
+        unsafe { self.buffer }
     }
 }
 

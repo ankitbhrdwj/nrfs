@@ -21,6 +21,7 @@ use hashbrown::HashMap;
 pub use io::*;
 use mnode::{MemNode, NodeType};
 
+mod fd;
 mod file;
 pub mod io;
 mod mnode;
@@ -63,7 +64,7 @@ custom_error! {
 
 /// Abstract definition of file-system interface operations.
 pub trait FileSystem {
-    fn create(&mut self, pathname: &str, modes: Modes) -> Result<u64, FileSystemError>;
+    fn create(&mut self, pathname: &str, modes: Modes) -> Result<Mnode, FileSystemError>;
     fn write(
         &mut self,
         mnode_num: Mnode,
@@ -81,56 +82,6 @@ pub trait FileSystem {
     fn delete(&mut self, pathname: &str) -> Result<bool, FileSystemError>;
     fn truncate(&mut self, pathname: &str) -> Result<bool, FileSystemError>;
     fn rename(&mut self, oldname: &str, newname: &str) -> Result<bool, FileSystemError>;
-}
-
-/// Abstract definition of a file descriptor.
-pub trait FileDescriptor {
-    fn init_fd() -> Fd;
-    fn update_fd(&mut self, mnode: Mnode, flags: FileFlags);
-    fn get_mnode(&self) -> Mnode;
-    fn get_flags(&self) -> FileFlags;
-    fn get_offset(&self) -> usize;
-    fn update_offset(&self, new_offset: usize);
-}
-
-/// A file descriptor representaion.
-#[derive(Debug, Default)]
-pub struct Fd {
-    mnode: Mnode,
-    flags: FileFlags,
-    offset: AtomicUsize,
-}
-
-impl FileDescriptor for Fd {
-    fn init_fd() -> Fd {
-        Fd {
-            // Intial values are just the place-holders and shouldn't be used.
-            mnode: core::u64::MAX,
-            flags: Default::default(),
-            offset: AtomicUsize::new(0),
-        }
-    }
-
-    fn update_fd(&mut self, mnode: Mnode, flags: FileFlags) {
-        self.mnode = mnode;
-        self.flags = flags;
-    }
-
-    fn get_mnode(&self) -> Mnode {
-        self.mnode.clone()
-    }
-
-    fn get_flags(&self) -> FileFlags {
-        self.flags.clone()
-    }
-
-    fn get_offset(&self) -> usize {
-        self.offset.load(Ordering::Relaxed)
-    }
-
-    fn update_offset(&self, new_offset: usize) {
-        self.offset.store(new_offset, Ordering::Release);
-    }
 }
 
 /// The in-memory file-system representation.
@@ -181,7 +132,7 @@ impl Default for MemFS {
 
 impl FileSystem for MemFS {
     /// Create a file relative to the root directory.
-    fn create(&mut self, pathname: &str, modes: Modes) -> Result<u64, FileSystemError> {
+    fn create(&mut self, pathname: &str, modes: Modes) -> Result<Mnode, FileSystemError> {
         // Check if the file with the same name already exists.
         match self.files.get(&pathname.to_string()) {
             Some(_) => return Err(FileSystemError::AlreadyPresent),

@@ -20,6 +20,7 @@ use custom_error::custom_error;
 use hashbrown::HashMap;
 pub use io::*;
 use mnode::{MemNode, NodeType};
+use spin::RwLock;
 
 mod fd;
 mod file;
@@ -64,9 +65,9 @@ custom_error! {
 
 /// Abstract definition of file-system interface operations.
 pub trait FileSystem {
-    fn create(&mut self, pathname: &str, modes: Modes) -> Result<Mnode, FileSystemError>;
+    fn create(&self, pathname: &str, modes: Modes) -> Result<Mnode, FileSystemError>;
     fn write(
-        &mut self,
+        &self,
         mnode_num: Mnode,
         buffer: &[u8],
         offset: usize,
@@ -79,23 +80,23 @@ pub trait FileSystem {
     ) -> Result<usize, FileSystemError>;
     fn lookup(&self, pathname: &str) -> Option<Arc<Mnode>>;
     fn file_info(&self, mnode: Mnode) -> FileInfo;
-    fn delete(&mut self, pathname: &str) -> Result<bool, FileSystemError>;
-    fn truncate(&mut self, pathname: &str) -> Result<bool, FileSystemError>;
-    fn rename(&mut self, oldname: &str, newname: &str) -> Result<bool, FileSystemError>;
+    fn delete(&self, pathname: &str) -> Result<bool, FileSystemError>;
+    fn truncate(&self, pathname: &str) -> Result<bool, FileSystemError>;
+    fn rename(&self, oldname: &str, newname: &str) -> Result<bool, FileSystemError>;
 }
 
 /// The in-memory file-system representation.
 #[derive(Debug)]
 pub struct MemFS {
-    mnodes: HashMap<Mnode, MemNode>,
-    files: HashMap<String, Arc<Mnode>>,
+    mnodes: RwLock<HashMap<Mnode, RwLock<MemNode>>>,
+    files: RwLock<HashMap<String, Arc<Mnode>>>,
     root: (String, Mnode),
     nextmemnode: AtomicUsize,
 }
 
 impl MemFS {
     /// Get the next available memnode number.
-    fn get_next_mno(&mut self) -> usize {
+    fn get_next_mno(&self) -> usize {
         self.nextmemnode.fetch_add(1, Ordering::Relaxed)
     }
 }
@@ -106,19 +107,21 @@ impl Default for MemFS {
         let rootdir = "/";
         let rootmnode = 1;
 
-        let mut mnodes = HashMap::new();
-        mnodes.insert(
+        let mnodes = RwLock::new(HashMap::new());
+        mnodes.write().insert(
             rootmnode,
-            MemNode::new(
-                rootmnode,
-                rootdir,
-                FileModes::S_IRWXU.into(),
-                NodeType::Directory,
-            )
-            .unwrap(),
+            RwLock::new(
+                MemNode::new(
+                    rootmnode,
+                    rootdir,
+                    FileModes::S_IRWXU.into(),
+                    NodeType::Directory,
+                )
+                .unwrap(),
+            ),
         );
-        let mut files = HashMap::new();
-        files.insert(rootdir.to_string(), Arc::new(1));
+        let files = RwLock::new(HashMap::new());
+        files.write().insert(rootdir.to_string(), Arc::new(1));
         let root = (rootdir.to_string(), 1);
 
         MemFS {
@@ -132,9 +135,9 @@ impl Default for MemFS {
 
 impl FileSystem for MemFS {
     /// Create a file relative to the root directory.
-    fn create(&mut self, pathname: &str, modes: Modes) -> Result<Mnode, FileSystemError> {
+    fn create(&self, pathname: &str, modes: Modes) -> Result<Mnode, FileSystemError> {
         // Check if the file with the same name already exists.
-        match self.files.get(&pathname.to_string()) {
+        match self.files.read().get(&pathname.to_string()) {
             Some(_) => return Err(FileSystemError::AlreadyPresent),
             None => {}
         }
@@ -146,21 +149,23 @@ impl FileSystem for MemFS {
             Ok(memnode) => memnode,
             Err(e) => return Err(e),
         };
-        self.files.insert(pathname.to_string(), Arc::new(mnode_num));
-        self.mnodes.insert(mnode_num, memnode);
+        self.files
+            .write()
+            .insert(pathname.to_string(), Arc::new(mnode_num));
+        self.mnodes.write().insert(mnode_num, RwLock::new(memnode));
 
         Ok(mnode_num)
     }
 
     /// Write data to a file.
     fn write(
-        &mut self,
+        &self,
         mnode_num: Mnode,
         buffer: &[u8],
         offset: usize,
     ) -> Result<usize, FileSystemError> {
-        match self.mnodes.get_mut(&mnode_num) {
-            Some(mnode) => mnode.write(buffer, offset),
+        match self.mnodes.read().get(&mnode_num) {
+            Some(mnode) => mnode.write().write(buffer, offset),
             None => Err(FileSystemError::InvalidFile),
         }
     }
@@ -172,8 +177,8 @@ impl FileSystem for MemFS {
         buffer: &mut [u8],
         offset: usize,
     ) -> Result<usize, FileSystemError> {
-        match self.mnodes.get(&mnode_num) {
-            Some(mnode) => mnode.read(buffer, offset),
+        match self.mnodes.read().get(&mnode_num) {
+            Some(mnode) => mnode.read().read(buffer, offset),
             None => Err(FileSystemError::InvalidFile),
         }
     }
@@ -181,20 +186,21 @@ impl FileSystem for MemFS {
     /// Check if a file exists in the file system or not.
     fn lookup(&self, pathname: &str) -> Option<Arc<Mnode>> {
         self.files
+            .read()
             .get(&pathname.to_string())
             .map(|mnode| Arc::clone(mnode))
     }
 
     /// Find the size and type by giving the mnode number.
     fn file_info(&self, mnode: Mnode) -> FileInfo {
-        match self.mnodes.get(&mnode) {
-            Some(mnode) => match mnode.get_mnode_type() {
+        match self.mnodes.read().get(&mnode) {
+            Some(mnode) => match mnode.read().get_mnode_type() {
                 NodeType::Directory => FileInfo {
                     fsize: 0,
                     ftype: NodeType::Directory.into(),
                 },
                 NodeType::File => FileInfo {
-                    fsize: mnode.get_file_size() as u64,
+                    fsize: mnode.read().get_file_size() as u64,
                     ftype: NodeType::File.into(),
                 },
             },
@@ -203,17 +209,17 @@ impl FileSystem for MemFS {
     }
 
     /// Delete a file from the file-system.
-    fn delete(&mut self, pathname: &str) -> Result<bool, FileSystemError> {
-        match self.files.remove(&pathname.to_string()) {
+    fn delete(&self, pathname: &str) -> Result<bool, FileSystemError> {
+        match self.files.write().remove(&pathname.to_string()) {
             Some(mnode) => {
                 // If the pathname is the only link to the memnode, then remove it.
                 match Arc::strong_count(&mnode) {
                     1 => {
-                        self.mnodes.remove(&mnode);
+                        self.mnodes.write().remove(&mnode);
                         return Ok(true);
                     }
                     _ => {
-                        self.files.insert(pathname.to_string(), mnode);
+                        self.files.write().insert(pathname.to_string(), mnode);
                         return Err(FileSystemError::PermissionError);
                     }
                 }
@@ -222,10 +228,10 @@ impl FileSystem for MemFS {
         };
     }
 
-    fn truncate(&mut self, pathname: &str) -> Result<bool, FileSystemError> {
-        match self.files.get(&pathname.to_string()) {
-            Some(mnode) => match self.mnodes.get_mut(mnode) {
-                Some(memnode) => memnode.file_truncate(),
+    fn truncate(&self, pathname: &str) -> Result<bool, FileSystemError> {
+        match self.files.read().get(&pathname.to_string()) {
+            Some(mnode) => match self.mnodes.read().get(mnode) {
+                Some(memnode) => memnode.write().file_truncate(),
                 None => return Err(FileSystemError::InvalidFile),
             },
             None => return Err(FileSystemError::InvalidFile),
@@ -233,18 +239,18 @@ impl FileSystem for MemFS {
     }
 
     /// Rename a file from oldname to newname.
-    fn rename(&mut self, oldname: &str, newname: &str) -> Result<bool, FileSystemError> {
-        if self.files.get(oldname).is_none() {
+    fn rename(&self, oldname: &str, newname: &str) -> Result<bool, FileSystemError> {
+        if self.files.read().get(oldname).is_none() {
             return Err(FileSystemError::InvalidFile);
         }
 
         // If the newfile exists then overwrite it with the oldfile.
-        if self.files.get(newname).is_some() {
+        if self.files.read().get(newname).is_some() {
             self.delete(newname).unwrap();
         }
 
-        let (_key, value) = self.files.remove_entry(oldname).unwrap();
-        match self.files.insert(newname.to_string(), value) {
+        let (_key, value) = self.files.write().remove_entry(oldname).unwrap();
+        match self.files.write().insert(newname.to_string(), value) {
             None => return Ok(true),
             Some(_) => return Err(FileSystemError::PermissionError),
         }

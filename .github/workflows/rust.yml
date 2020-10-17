@@ -1,0 +1,28 @@
+name: Rust
+
+on: [push]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ${{matrix.os}}
+    
+    strategy:
+      matrix:
+        os: [ubuntu-18.04]
+        rust: [nightly]
+
+    steps:
+    - name: Set up a Rust toolchain
+      uses: hecrj/setup-rust-action@v1.0.2
+      with:
+        rust-version: ${{ matrix.rust }}
+    - uses: actions/checkout@v2
+    - name: Build
+      run: cargo build --verbose
+    - name: Run example
+      run: cargo run --verbose
+    - name: Run tests
+      run: cargo test --verbose

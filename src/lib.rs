@@ -11,6 +11,8 @@ extern crate std;
 extern crate alloc;
 extern crate core;
 extern crate hashbrown;
+#[macro_use]
+extern crate static_assertions;
 
 use alloc::string::{String, ToString};
 use alloc::sync::Arc;
@@ -20,12 +22,15 @@ use custom_error::custom_error;
 use hashbrown::HashMap;
 pub use io::*;
 use mnode::{MemNode, NodeType};
+use rwlock::RwLock as NrLock;
 use spin::RwLock;
 
 mod fd;
 mod file;
 pub mod io;
 mod mnode;
+mod rwlock;
+mod topology;
 
 /// The maximum number of open files for a process.
 pub const MAX_FILES_PER_PROCESS: usize = 1024;
@@ -84,11 +89,11 @@ pub trait FileSystem {
 }
 
 /// The in-memory file-system representation.
-#[derive(Debug)]
+//#[derive(Debug)]
 pub struct MemFS {
-    mnodes: RwLock<HashMap<Mnode, RwLock<MemNode>>>,
+    mnodes: NrLock<HashMap<Mnode, RwLock<MemNode>>>,
     files: RwLock<HashMap<String, Arc<Mnode>>>,
-    root: (String, Mnode),
+    _root: (String, Mnode),
     nextmemnode: AtomicUsize,
 }
 
@@ -105,7 +110,7 @@ impl Default for MemFS {
         let rootdir = "/";
         let rootmnode = 1;
 
-        let mnodes = RwLock::new(HashMap::new());
+        let mnodes = NrLock::<HashMap<Mnode, RwLock<MemNode>>>::default();
         mnodes.write().insert(
             rootmnode,
             RwLock::new(
@@ -120,12 +125,12 @@ impl Default for MemFS {
         );
         let files = RwLock::new(HashMap::new());
         files.write().insert(rootdir.to_string(), Arc::new(1));
-        let root = (rootdir.to_string(), 1);
+        let _root = (rootdir.to_string(), 1);
 
         MemFS {
             mnodes,
             files,
-            root,
+            _root,
             nextmemnode: AtomicUsize::new(2),
         }
     }
@@ -162,7 +167,7 @@ impl FileSystem for MemFS {
         buffer: &[u8],
         offset: usize,
     ) -> Result<usize, FileSystemError> {
-        match self.mnodes.read().get(&mnode_num) {
+        match self.mnodes.read(mnode_num as usize - 1).get(&mnode_num) {
             Some(mnode) => mnode.write().write(buffer, offset),
             None => Err(FileSystemError::InvalidFile),
         }
@@ -175,7 +180,7 @@ impl FileSystem for MemFS {
         buffer: &mut [u8],
         offset: usize,
     ) -> Result<usize, FileSystemError> {
-        match self.mnodes.read().get(&mnode_num) {
+        match self.mnodes.read(mnode_num as usize - 1).get(&mnode_num) {
             Some(mnode) => mnode.read().read(buffer, offset),
             None => Err(FileSystemError::InvalidFile),
         }
@@ -191,7 +196,7 @@ impl FileSystem for MemFS {
 
     /// Find the size and type by giving the mnode number.
     fn file_info(&self, mnode: Mnode) -> FileInfo {
-        match self.mnodes.read().get(&mnode) {
+        match self.mnodes.read(mnode as usize - 1).get(&mnode) {
             Some(mnode) => match mnode.read().get_mnode_type() {
                 NodeType::Directory => FileInfo {
                     fsize: 0,
@@ -228,7 +233,7 @@ impl FileSystem for MemFS {
 
     fn truncate(&self, pathname: &str) -> Result<bool, FileSystemError> {
         match self.files.read().get(&pathname.to_string()) {
-            Some(mnode) => match self.mnodes.read().get(mnode) {
+            Some(mnode) => match self.mnodes.read(0).get(mnode) {
                 Some(memnode) => memnode.write().file_truncate(),
                 None => return Err(FileSystemError::InvalidFile),
             },

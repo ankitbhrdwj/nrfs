@@ -15,6 +15,9 @@ jobs:
         rust: [nightly]
 
     steps:
+    - name: Install dependencies
+      run: sudo apt-get update && sudo apt-get install -y libhwloc-dev
+  
     - name: Set up a Rust toolchain
       uses: hecrj/setup-rust-action@v1.0.2
       with:

@@ -15,7 +15,7 @@ path = "bin/main.rs"
 [dependencies]
 log = "0.4"
 hashbrown = "0.9.1"
-custom_error = { git = "https://github.com/gz/custom_error.git" }
+custom_error_core = { git = "https://github.com/gz/custom_error.git" }
 bitflags = "1.2.1"
 x86 = "0.34.0"
 spin = "0.6.0"
